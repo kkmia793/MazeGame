@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections;
+using System.Threading;
 using Cysharp.Threading.Tasks;
 using unityroom.Api;
 
@@ -29,6 +30,7 @@ public class GameManager : MonoBehaviour
     public bool isStageTransitioning = false;
     public bool isGameOver = false;
     private bool isTimerActive = false; 
+    private CancellationTokenSource tileDeactivationCTS; // タイル消去のキャンセル用
     
     private void Awake()
     {
@@ -121,6 +123,10 @@ public class GameManager : MonoBehaviour
     {
         isStageTransitioning = true; 
         
+        // 既存のタイル消去処理をキャンセル（ステージ進行後）
+        tileDeactivationCTS?.Cancel();
+        tileDeactivationCTS = new CancellationTokenSource(); 
+        
         mazeGenerator.SetMazeVisibility(false);
         
         string stageText = ConvertStageNumberToKanji(stageNumber);
@@ -137,7 +143,7 @@ public class GameManager : MonoBehaviour
 
         // ゲーム進行処理
         EnablePlayerControl();
-        StartRandomTileDeactivation(stageNumber).Forget();
+        StartRandomTileDeactivation(stageNumber, tileDeactivationCTS.Token).Forget();
         
         await StageTimer(currentTimeLimit);
     }
@@ -191,15 +197,16 @@ public class GameManager : MonoBehaviour
         ShowPlayer();
     }
 
-    private async UniTask StartRandomTileDeactivation(int stageNumber)
+    private async UniTask StartRandomTileDeactivation(int stageNumber, CancellationToken token)
     {
         float interval = Mathf.Max(5.0f, 10.0f - (stageNumber - 1) * 0.5f); 
 
         while (!isGameOver)
         {
-            await UniTask.Delay((int)(interval * 1000)); 
-            int tilesToDeactivate = 5 + (stageNumber - 1) * 2; 
+            await UniTask.Delay((int)(interval * 1000), cancellationToken: token); 
+            if (token.IsCancellationRequested) return; 
 
+            int tilesToDeactivate = 5 + (stageNumber - 1) * 2; 
             lightController.DeactivateRandomTiles(tilesToDeactivate);
         }
     }
@@ -422,6 +429,8 @@ public class GameManager : MonoBehaviour
 
     private void ConfirmSelection()
     {
+        tileDeactivationCTS?.Cancel(); // 既存のタイル消去処理をキャンセル（シーン遷移後）
+        
         if (selectedOption == 0)
         {
             sceneManager.ReloadCurrentScene(); 
